@@ -2,10 +2,8 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/release.yml"
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -38,11 +36,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v${VERSION}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v${VERSION}"
+          fi
+
           NOTES="$(cat <<EOF
           CodexQuotaBar ${TAG}
 
           macOS menu bar app for showing Codex quota usage.
+
+          Changes:
+          - Adds explicit Codex CLI live refresh with confirmation.
+          - Keeps local snapshot refresh as the zero-consumption default.
 
           SHA256:
           $(cat "${ASSET}.sha256")
