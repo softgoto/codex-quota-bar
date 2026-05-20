@@ -22,9 +22,9 @@ final class SettingsWindowController {
         window.title = "CodexQuotaBar 设置"
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 440, height: 250))
-        window.minSize = NSSize(width: 440, height: 250)
-        window.maxSize = NSSize(width: 440, height: 250)
+        window.setContentSize(NSSize(width: 440, height: 286))
+        window.minSize = NSSize(width: 440, height: 286)
+        window.maxSize = NSSize(width: 440, height: 286)
         window.center()
         self.window = window
         window.makeKeyAndOrderFront(nil)
@@ -53,6 +53,8 @@ private struct SettingsView: View {
 
                 settingsRow(title: "自动检查", value: "每 5 分钟")
                 settingsRow(title: "读取内容", value: "token_count 事件里的 rate_limits")
+                settingsRow(title: "本机刷新", value: "重扫本机日志，零额度消耗")
+                settingsRow(title: "实时刷新", value: "调用 Codex CLI，会消耗少量额度")
             }
 
             HStack(spacing: 6) {
@@ -73,7 +75,7 @@ private struct SettingsView: View {
         .padding(.horizontal, 22)
         .padding(.top, 20)
         .padding(.bottom, 22)
-        .frame(width: 440, height: 250, alignment: .topLeading)
+        .frame(width: 440, height: 286, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 

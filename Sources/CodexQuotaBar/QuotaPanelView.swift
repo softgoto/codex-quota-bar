@@ -4,6 +4,7 @@ import SwiftUI
 
 struct QuotaPanelView: View {
     @ObservedObject var store: QuotaStore
+    @State private var showLiveRefreshWarning = false
 
     var body: some View {
         ZStack {
@@ -28,7 +29,9 @@ struct QuotaPanelView: View {
                     EmptyQuotaView(
                         message: store.errorMessage ?? "暂无额度数据",
                         isRefreshing: store.isRefreshing,
-                        refresh: store.refresh
+                        isLiveRefreshing: store.isLiveRefreshing,
+                        refresh: store.refresh,
+                        liveRefresh: { showLiveRefreshWarning = true }
                     )
                 }
             }
@@ -38,6 +41,14 @@ struct QuotaPanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 500, height: 200)
+        .alert("实时刷新会消耗少量 Codex 额度", isPresented: $showLiveRefreshWarning) {
+            Button("取消", role: .cancel) {}
+            Button("继续实时刷新") {
+                store.refreshLive()
+            }
+        } message: {
+            Text("普通刷新只重扫本机日志，零消耗。实时刷新会调用 Codex CLI 发起一次极小请求，用来获取服务端最新 rate_limits。")
+        }
     }
 
     private func footer(snapshot: QuotaSnapshot) -> some View {
@@ -55,6 +66,14 @@ struct QuotaPanelView: View {
                     }
             }
 
+            Text(snapshot.sourceKind.displayName)
+                .font(.system(size: 9, weight: .heavy, design: .rounded))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .foregroundStyle(.white.opacity(0.72))
+                .background(Color.black.opacity(0.16), in: Capsule())
+                .help(snapshot.source)
+
             Spacer()
 
             Button(action: store.refresh) {
@@ -68,7 +87,22 @@ struct QuotaPanelView: View {
                 }
             }
             .buttonStyle(IconButtonStyle())
-            .help("手动刷新，自动每 5 分钟检查一次")
+            .help("本机刷新：重扫本机 Codex 日志，零消耗；自动每 5 分钟检查一次")
+
+            Button(action: { showLiveRefreshWarning = true }) {
+                if store.isLiveRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 24, height: 24)
+                } else {
+                    Text("实时")
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .frame(width: 34, height: 24)
+                }
+            }
+            .buttonStyle(LiveRefreshButtonStyle())
+            .disabled(store.isLiveRefreshing)
+            .help("实时刷新：调用 Codex CLI 获取服务端最新额度，会消耗少量额度")
 
             Button(action: SettingsWindowController.shared.show) {
                 Image(systemName: "gearshape")
@@ -241,10 +275,12 @@ private struct QuotaRing: View {
 private struct EmptyQuotaView: View {
     let message: String
     let isRefreshing: Bool
+    let isLiveRefreshing: Bool
     let refresh: () -> Void
+    let liveRefresh: () -> Void
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 14) {
             Image(systemName: "chart.pie")
                 .font(.system(size: 42, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.42))
@@ -257,10 +293,18 @@ private struct EmptyQuotaView: View {
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.56))
 
-            Button(action: refresh) {
-                Label(isRefreshing ? "刷新中" : "手动刷新", systemImage: "arrow.clockwise")
+            HStack(spacing: 10) {
+                Button(action: refresh) {
+                    Label(isRefreshing ? "刷新中" : "本机刷新", systemImage: "arrow.clockwise")
+                }
+                .disabled(isRefreshing)
+
+                Button(action: liveRefresh) {
+                    Label(isLiveRefreshing ? "实时中" : "实时刷新", systemImage: "bolt.fill")
+                }
+                .disabled(isLiveRefreshing)
             }
-            .disabled(isRefreshing)
+            .controlSize(.small)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -272,6 +316,18 @@ private struct IconButtonStyle: ButtonStyle {
             .font(.system(size: 14, weight: .bold))
             .foregroundStyle(.white.opacity(configuration.isPressed ? 0.56 : 0.86))
             .background(Color.white.opacity(configuration.isPressed ? 0.18 : 0.10), in: Circle())
+    }
+}
+
+private struct LiveRefreshButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.white.opacity(configuration.isPressed ? 0.62 : 0.88))
+            .background(Color.orange.opacity(configuration.isPressed ? 0.30 : 0.20), in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(Color.orange.opacity(0.28), lineWidth: 1)
+            }
     }
 }
 

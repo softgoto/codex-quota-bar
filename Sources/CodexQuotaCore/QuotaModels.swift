@@ -35,24 +35,41 @@ public struct QuotaWindow: Equatable, Sendable {
 }
 
 public struct QuotaSnapshot: Equatable, Sendable {
+    public enum SourceKind: String, Equatable, Sendable {
+        case localSnapshot
+        case codexCLI
+
+        public var displayName: String {
+            switch self {
+            case .localSnapshot:
+                return "快照"
+            case .codexCLI:
+                return "实时"
+            }
+        }
+    }
+
     public let primary: QuotaWindow
     public let secondary: QuotaWindow
     public let capturedAt: Date
     public let planType: String?
     public let source: String
+    public let sourceKind: SourceKind
 
     public init(
         primary: QuotaWindow,
         secondary: QuotaWindow,
         capturedAt: Date,
         planType: String?,
-        source: String
+        source: String,
+        sourceKind: SourceKind = .localSnapshot
     ) {
         self.primary = primary
         self.secondary = secondary
         self.capturedAt = capturedAt
         self.planType = planType
         self.source = source
+        self.sourceKind = sourceKind
     }
 
     public var tightestRemainingPercent: Double {
@@ -66,11 +83,20 @@ public protocol QuotaProvider {
 
 public enum QuotaProviderError: Error, Equatable, LocalizedError {
     case noQuotaData
+    case codexCLIUnavailable
+    case codexCLIFailed(String)
+    case codexCLITimedOut
 
     public var errorDescription: String? {
         switch self {
         case .noQuotaData:
             return "暂无额度数据"
+        case .codexCLIUnavailable:
+            return "找不到 Codex CLI"
+        case let .codexCLIFailed(message):
+            return "Codex CLI 实时刷新失败：\(message)"
+        case .codexCLITimedOut:
+            return "Codex CLI 实时刷新超时"
         }
     }
 }
