@@ -8,6 +8,7 @@ enum CodexQuotaCoreSmokeTests {
         try await testIgnoresTokenCountWithoutRateLimits()
         try await testChoosesNewestEventAcrossFiles()
         try await testClampsRemainingPercent()
+        try testParsesAppServerRateLimits()
         print("CodexQuotaCoreSmokeTests passed")
     }
 
@@ -101,6 +102,57 @@ enum CodexQuotaCoreSmokeTests {
             expect(snapshot.primary.remainingPercent == 0, "remaining percent should clamp to 0")
             expect(snapshot.secondary.remainingPercent == 100, "remaining percent should clamp to 100")
         }
+    }
+
+    private static func testParsesAppServerRateLimits() throws {
+        let data = """
+        {
+          "rateLimits": {
+            "limitId": "legacy",
+            "limitName": null,
+            "primary": {
+              "usedPercent": 80,
+              "windowDurationMins": 300,
+              "resetsAt": 1779199104
+            },
+            "secondary": {
+              "usedPercent": 70,
+              "windowDurationMins": 10080,
+              "resetsAt": 1779785904
+            },
+            "planType": "pro"
+          },
+          "rateLimitsByLimitId": {
+            "codex": {
+              "limitId": "codex",
+              "limitName": null,
+              "primary": {
+                "usedPercent": 3,
+                "windowDurationMins": 300,
+                "resetsAt": 1779429665
+              },
+              "secondary": {
+                "usedPercent": 34,
+                "windowDurationMins": 10080,
+                "resetsAt": 1779836113
+              },
+              "planType": "prolite"
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try CodexAppServerQuotaProvider.snapshot(
+            fromAppServerResultData: data,
+            capturedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        expect(snapshot.sourceKind == .codexAppServer, "source kind should be app-server realtime")
+        expect(snapshot.primary.windowMinutes == 300, "primary app-server window should be 300 minutes")
+        expect(snapshot.primary.remainingPercent == 97, "primary app-server remaining should be 97")
+        expect(snapshot.secondary.windowMinutes == 10080, "secondary app-server window should be 10080 minutes")
+        expect(snapshot.secondary.remainingPercent == 66, "secondary app-server remaining should be 66")
+        expect(snapshot.planType == "prolite", "app-server codex limit should win over legacy root limit")
     }
 
     private static func withTemporaryCodexHome(_ body: (URL) async throws -> Void) async throws {

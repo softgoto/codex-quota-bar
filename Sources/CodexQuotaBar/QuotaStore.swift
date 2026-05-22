@@ -17,9 +17,12 @@ final class QuotaStore: ObservableObject {
     private let liveProvider: QuotaProvider
     private var timer: Timer?
 
-    init(provider: QuotaProvider, liveProvider: QuotaProvider = CodexCLIQuotaProvider()) {
+    init(provider: QuotaProvider, liveProvider: QuotaProvider? = nil) {
         self.provider = provider
-        self.liveProvider = liveProvider
+        self.liveProvider = liveProvider ?? CompatibleLiveQuotaProvider(
+            primary: CodexAppServerQuotaProvider(),
+            fallback: provider
+        )
     }
 
     deinit {
@@ -80,6 +83,19 @@ final class QuotaStore: ObservableObject {
             }
 
             isLiveRefreshing = false
+        }
+    }
+}
+
+private struct CompatibleLiveQuotaProvider: QuotaProvider {
+    let primary: QuotaProvider
+    let fallback: QuotaProvider
+
+    func fetch() async throws -> QuotaSnapshot {
+        do {
+            return try await primary.fetch()
+        } catch {
+            return try await fallback.fetch()
         }
     }
 }

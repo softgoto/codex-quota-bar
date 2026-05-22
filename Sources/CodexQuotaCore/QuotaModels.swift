@@ -37,12 +37,15 @@ public struct QuotaWindow: Equatable, Sendable {
 public struct QuotaSnapshot: Equatable, Sendable {
     public enum SourceKind: String, Equatable, Sendable {
         case localSnapshot
+        case codexAppServer
         case codexCLI
 
         public var displayName: String {
             switch self {
             case .localSnapshot:
                 return "快照"
+            case .codexAppServer:
+                return "实时"
             case .codexCLI:
                 return "实时"
             }
@@ -94,9 +97,9 @@ public enum QuotaProviderError: Error, Equatable, LocalizedError {
         case .codexCLIUnavailable:
             return "找不到 Codex CLI"
         case let .codexCLIFailed(message):
-            return "Codex CLI 实时刷新失败：\(message)"
+            return "Codex 实时刷新失败：\(message)"
         case .codexCLITimedOut:
-            return "Codex CLI 实时刷新超时"
+            return "Codex 实时刷新超时"
         }
     }
 }

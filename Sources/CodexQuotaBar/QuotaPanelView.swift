@@ -4,7 +4,6 @@ import SwiftUI
 
 struct QuotaPanelView: View {
     @ObservedObject var store: QuotaStore
-    @State private var showLiveRefreshWarning = false
 
     var body: some View {
         ZStack {
@@ -31,7 +30,7 @@ struct QuotaPanelView: View {
                         isRefreshing: store.isRefreshing,
                         isLiveRefreshing: store.isLiveRefreshing,
                         refresh: store.refresh,
-                        liveRefresh: { showLiveRefreshWarning = true }
+                        liveRefresh: store.refreshLive
                     )
                 }
             }
@@ -41,14 +40,6 @@ struct QuotaPanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 500, height: 200)
-        .alert("实时刷新会消耗少量 Codex 额度", isPresented: $showLiveRefreshWarning) {
-            Button("取消", role: .cancel) {}
-            Button("继续实时刷新") {
-                store.refreshLive()
-            }
-        } message: {
-            Text("普通刷新只重扫本机日志，零消耗。实时刷新会调用 Codex CLI 发起一次极小请求，用来获取服务端最新 rate_limits。")
-        }
     }
 
     private func footer(snapshot: QuotaSnapshot) -> some View {
@@ -89,7 +80,7 @@ struct QuotaPanelView: View {
             .buttonStyle(IconButtonStyle())
             .help("本机刷新：重扫本机 Codex 日志，零消耗；自动每 5 分钟检查一次")
 
-            Button(action: { showLiveRefreshWarning = true }) {
+            Button(action: store.refreshLive) {
                 if store.isLiveRefreshing {
                     ProgressView()
                         .controlSize(.small)
@@ -102,7 +93,7 @@ struct QuotaPanelView: View {
             }
             .buttonStyle(LiveRefreshButtonStyle())
             .disabled(store.isLiveRefreshing)
-            .help("实时刷新：调用 Codex CLI 获取服务端最新额度，会消耗少量额度")
+            .help("实时刷新：优先读取 Codex app-server 额度接口，零模型请求；旧版 Codex 回退本机快照")
 
             Button(action: SettingsWindowController.shared.show) {
                 Image(systemName: "gearshape")
@@ -289,7 +280,7 @@ private struct EmptyQuotaView: View {
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.86))
 
-            Text("等待 Codex 会话写入 token_count / rate_limits 后自动显示")
+            Text("可本机刷新快照，或用新版 Codex 实时读取额度状态")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.56))
 

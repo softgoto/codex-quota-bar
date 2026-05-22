@@ -22,9 +22,9 @@ final class SettingsWindowController {
         window.title = "CodexQuotaBar 设置"
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 440, height: 286))
-        window.minSize = NSSize(width: 440, height: 286)
-        window.maxSize = NSSize(width: 440, height: 286)
+        window.setContentSize(NSSize(width: 480, height: 292))
+        window.minSize = NSSize(width: 480, height: 292)
+        window.maxSize = NSSize(width: 480, height: 292)
         window.center()
         self.window = window
         window.makeKeyAndOrderFront(nil)
@@ -37,71 +37,94 @@ private struct SettingsView: View {
         .appendingPathComponent(".codex")
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             header
-
-            VStack(spacing: 10) {
-                settingsRow(
-                    title: "数据源",
-                    value: codexHome.path,
-                    monospace: true
-                ) {
-                    Button("打开") {
-                        NSWorkspace.shared.open(codexHome)
-                    }
-                }
-
-                settingsRow(title: "自动检查", value: "每 5 分钟")
-                settingsRow(title: "读取内容", value: "token_count 事件里的 rate_limits")
-                settingsRow(title: "本机刷新", value: "重扫本机日志，零额度消耗")
-                settingsRow(title: "实时刷新", value: "调用 Codex CLI，会消耗少量额度")
-            }
-
-            HStack(spacing: 6) {
-                Text("作者")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                Text("softgoto + Codex")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary.opacity(0.82))
-            }
-
-            Text("没有找到额度事件时，菜单栏会显示 Cx --，不会根据 token 用量猜测剩余额度。")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            settingsGroup
+            footer
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 20)
-        .padding(.bottom, 22)
-        .frame(width: 440, height: 286, alignment: .topLeading)
+        .padding(.horizontal, 24)
+        .padding(.top, 18)
+        .padding(.bottom, 16)
+        .frame(width: 480, height: 292, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "chart.pie.fill")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.teal)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text("CodexQuotaBar")
-                        .font(.system(size: 18, weight: .bold))
-
-                    Text(appVersion)
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .foregroundStyle(.secondary)
-                        .background(Color.secondary.opacity(0.10), in: Capsule())
+    private var settingsGroup: some View {
+        VStack(spacing: 0) {
+            settingsRow(
+                title: "数据源",
+                value: codexHome.path,
+                monospace: true
+            ) {
+                Button("打开") {
+                    NSWorkspace.shared.open(codexHome)
                 }
+            }
+
+            rowSeparator
+            settingsRow(title: "自动检查", value: "每 5 分钟")
+            rowSeparator
+            settingsRow(title: "读取内容", value: "app-server rate_limits；旧版回退 JSONL")
+            rowSeparator
+            settingsRow(title: "本机刷新", value: "重扫本机日志，零额度消耗")
+            rowSeparator
+            settingsRow(title: "实时刷新", value: "零模型请求；旧版回退本机快照")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        }
+    }
+
+    private var rowSeparator: some View {
+        Divider()
+            .padding(.leading, 82)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Text("作者")
+                .font(.system(size: 11, weight: .semibold))
+
+            Text("softgoto + Codex")
+                .font(.system(size: 11, weight: .medium))
+
+            Spacer()
+
+            Text("无数据时显示 Cx --，不猜测")
+                .font(.system(size: 11))
+        }
+        .foregroundStyle(.secondary)
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "chart.pie.fill")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 38, height: 38)
+                .background(Color.teal, in: Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("CodexQuotaBar")
+                    .font(.system(size: 19, weight: .bold))
 
                 Text("Codex 额度菜单栏组件")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
+
+            Spacer()
+
+            Text(appVersion)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .foregroundStyle(.secondary)
+                .background(Color.secondary.opacity(0.10), in: Capsule())
         }
     }
 
@@ -126,7 +149,7 @@ private struct SettingsView: View {
         monospace: Bool = false,
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -143,6 +166,7 @@ private struct SettingsView: View {
             trailing()
                 .controlSize(.small)
         }
+        .frame(height: 30)
     }
 
     private func settingsRow(title: String, value: String) -> some View {
