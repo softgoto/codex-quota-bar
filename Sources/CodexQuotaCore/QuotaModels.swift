@@ -34,9 +34,36 @@ public struct QuotaWindow: Equatable, Sendable {
     }
 }
 
+public struct QuotaCredits: Equatable, Sendable {
+    public let balance: String?
+    public let hasCredits: Bool
+    public let unlimited: Bool
+
+    public init(balance: String?, hasCredits: Bool, unlimited: Bool) {
+        self.balance = balance
+        self.hasCredits = hasCredits
+        self.unlimited = unlimited
+    }
+}
+
+public struct QuotaIndividualLimit: Equatable, Sendable {
+    public let limit: String
+    public let used: String
+    public let remainingPercent: Double
+    public let resetsAt: Date
+
+    public init(limit: String, used: String, remainingPercent: Double, resetsAt: Date) {
+        self.limit = limit
+        self.used = used
+        self.remainingPercent = remainingPercent
+        self.resetsAt = resetsAt
+    }
+}
+
 public struct QuotaSnapshot: Equatable, Sendable {
     public enum SourceKind: String, Equatable, Sendable {
         case localSnapshot
+        case offlineSnapshot
         case codexAppServer
         case codexCLI
 
@@ -44,6 +71,8 @@ public struct QuotaSnapshot: Equatable, Sendable {
             switch self {
             case .localSnapshot:
                 return "快照"
+            case .offlineSnapshot:
+                return "离线"
             case .codexAppServer:
                 return "实时"
             case .codexCLI:
@@ -56,6 +85,11 @@ public struct QuotaSnapshot: Equatable, Sendable {
     public let secondary: QuotaWindow
     public let capturedAt: Date
     public let planType: String?
+    public let limitId: String?
+    public let limitName: String?
+    public let rateLimitReachedType: String?
+    public let credits: QuotaCredits?
+    public let individualLimit: QuotaIndividualLimit?
     public let source: String
     public let sourceKind: SourceKind
 
@@ -64,6 +98,11 @@ public struct QuotaSnapshot: Equatable, Sendable {
         secondary: QuotaWindow,
         capturedAt: Date,
         planType: String?,
+        limitId: String? = nil,
+        limitName: String? = nil,
+        rateLimitReachedType: String? = nil,
+        credits: QuotaCredits? = nil,
+        individualLimit: QuotaIndividualLimit? = nil,
         source: String,
         sourceKind: SourceKind = .localSnapshot
     ) {
@@ -71,6 +110,11 @@ public struct QuotaSnapshot: Equatable, Sendable {
         self.secondary = secondary
         self.capturedAt = capturedAt
         self.planType = planType
+        self.limitId = limitId
+        self.limitName = limitName
+        self.rateLimitReachedType = rateLimitReachedType
+        self.credits = credits
+        self.individualLimit = individualLimit
         self.source = source
         self.sourceKind = sourceKind
     }
@@ -82,6 +126,24 @@ public struct QuotaSnapshot: Equatable, Sendable {
 
 public protocol QuotaProvider {
     func fetch() async throws -> QuotaSnapshot
+}
+
+public struct FallbackQuotaProvider: QuotaProvider {
+    private let primary: QuotaProvider
+    private let fallback: QuotaProvider
+
+    public init(primary: QuotaProvider, fallback: QuotaProvider) {
+        self.primary = primary
+        self.fallback = fallback
+    }
+
+    public func fetch() async throws -> QuotaSnapshot {
+        do {
+            return try await primary.fetch()
+        } catch {
+            return try await fallback.fetch()
+        }
+    }
 }
 
 public enum QuotaProviderError: Error, Equatable, LocalizedError {

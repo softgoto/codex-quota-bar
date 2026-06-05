@@ -1,24 +1,54 @@
 import Foundation
 
-public final class CodexAppServerQuotaProvider: QuotaProvider {
+public final class CodexAppServerQuotaProvider: QuotaProvider, @unchecked Sendable {
+    private let client: CodexAppServerClient
     private let timeout: TimeInterval
 
-    public init(timeout: TimeInterval = 15) {
+    public init(client: CodexAppServerClient = CodexAppServerClient(), timeout: TimeInterval = 15) {
+        self.client = client
         self.timeout = timeout
     }
 
-    public func fetch() async throws -> QuotaSnapshot {
-        let timeout = timeout
+    deinit {
+        client.stop()
+    }
 
-        return try await Task.detached(priority: .userInitiated) {
-            try Self.fetchWithAppServer(timeout: timeout)
-        }.value
+    public func fetch() async throws -> QuotaSnapshot {
+        try await readSnapshot()
+    }
+
+    public func readSnapshot() async throws -> QuotaSnapshot {
+        do {
+            let data = try await client.request(
+                method: "account/rateLimits/read",
+                params: NSNull(),
+                timeout: timeout
+            )
+            return try Self.snapshot(fromAppServerResultData: data)
+        } catch let error as QuotaProviderError {
+            throw error
+        } catch {
+            throw QuotaProviderError.codexCLIFailed(
+                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            )
+        }
+    }
+
+    public func setRateLimitsUpdatedHandler(_ handler: (() -> Void)?) {
+        client.setRateLimitsUpdatedHandler(handler)
+    }
+
+    public func stop() {
+        client.stop()
     }
 
     public static func snapshot(fromAppServerResultData data: Data, capturedAt: Date = Date()) throws -> QuotaSnapshot {
         let response = try JSONDecoder().decode(AppServerRateLimitsResponse.self, from: data)
         let snapshot = response.rateLimitsByLimitId?["codex"] ?? response.rateLimits
+        return try quotaSnapshot(from: snapshot, capturedAt: capturedAt)
+    }
 
+    private static func quotaSnapshot(from snapshot: AppServerRateLimitSnapshot, capturedAt: Date) throws -> QuotaSnapshot {
         guard let primary = snapshot.primary?.quotaWindow,
               let secondary = snapshot.secondary?.quotaWindow else {
             throw QuotaProviderError.noQuotaData
@@ -29,186 +59,14 @@ public final class CodexAppServerQuotaProvider: QuotaProvider {
             secondary: secondary,
             capturedAt: capturedAt,
             planType: snapshot.planType,
+            limitId: snapshot.limitId,
+            limitName: snapshot.limitName,
+            rateLimitReachedType: snapshot.rateLimitReachedType,
+            credits: snapshot.credits?.quotaCredits,
+            individualLimit: snapshot.individualLimit?.quotaIndividualLimit,
             source: "Codex app-server 实时读取",
             sourceKind: .codexAppServer
         )
-    }
-
-    private static func fetchWithAppServer(timeout: TimeInterval) throws -> QuotaSnapshot {
-        let process = Process()
-        let stdin = Pipe()
-        let stdout = Pipe()
-        let stderr = Pipe()
-        let lock = NSLock()
-        let responseSemaphore = DispatchSemaphore(value: 0)
-
-        var stdoutBuffer = ""
-        var stderrBuffer = ""
-        var response: Result<QuotaSnapshot, Error>?
-
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["codex", "app-server", "--listen", "stdio://"]
-        process.standardInput = stdin
-        process.standardOutput = stdout
-        process.standardError = stderr
-        process.environment = environmentWithCodexPath()
-        process.terminationHandler = { _ in
-            lock.lock()
-            if response == nil {
-                response = .failure(
-                    QuotaProviderError.codexCLIFailed(
-                        lastLine(from: stderrBuffer) ?? "app-server exited without quota response"
-                    )
-                )
-                responseSemaphore.signal()
-            }
-            lock.unlock()
-        }
-
-        stdout.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else {
-                return
-            }
-
-            lock.lock()
-            stdoutBuffer.append(chunk)
-            let lines = stdoutBuffer.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-            stdoutBuffer = lines.last ?? ""
-            let completeLines = lines.dropLast()
-            lock.unlock()
-
-            for line in completeLines {
-                guard let result = parseResponseLine(line) else {
-                    continue
-                }
-
-                lock.lock()
-                if response == nil {
-                    response = result
-                    responseSemaphore.signal()
-                }
-                lock.unlock()
-            }
-        }
-
-        stderr.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else {
-                return
-            }
-
-            lock.lock()
-            stderrBuffer.append(chunk)
-            lock.unlock()
-        }
-
-        do {
-            try process.run()
-        } catch {
-            throw QuotaProviderError.codexCLIUnavailable
-        }
-
-        guard writeJSONLine(
-            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"CodexQuotaBar","version":"1"},"capabilities":{"experimentalApi":true}}}"#,
-            to: stdin
-        ),
-        writeJSONLine(#"{"method":"initialized"}"#, to: stdin),
-        writeJSONLine(#"{"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read","params":null}"#, to: stdin) else {
-            cleanup(process: process, stdout: stdout, stderr: stderr)
-            throw QuotaProviderError.codexCLIFailed("app-server stdin is not writable")
-        }
-
-        let timeoutMilliseconds = max(1, Int(timeout * 1000))
-        let deadline = DispatchTime.now() + .milliseconds(timeoutMilliseconds)
-        if responseSemaphore.wait(timeout: deadline) == .timedOut {
-            cleanup(process: process, stdout: stdout, stderr: stderr)
-            throw QuotaProviderError.codexCLITimedOut
-        }
-
-        cleanup(process: process, stdout: stdout, stderr: stderr)
-
-        lock.lock()
-        let result = response
-        let errorOutput = stderrBuffer
-        lock.unlock()
-
-        if let result {
-            return try result.get()
-        }
-
-        throw QuotaProviderError.codexCLIFailed(lastLine(from: errorOutput) ?? "app-server returned no quota response")
-    }
-
-    private static func writeJSONLine(_ line: String, to pipe: Pipe) -> Bool {
-        guard let data = "\(line)\n".data(using: .utf8) else {
-            return false
-        }
-
-        do {
-            try pipe.fileHandleForWriting.write(contentsOf: data)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    private static func parseResponseLine(_ line: String) -> Result<QuotaSnapshot, Error>? {
-        guard let data = line.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data),
-              let dictionary = object as? [String: Any],
-              (dictionary["id"] as? Int) == 2 else {
-            return nil
-        }
-
-        if let error = dictionary["error"] as? [String: Any] {
-            let message = error["message"] as? String ?? "app-server rate limit read failed"
-            return .failure(QuotaProviderError.codexCLIFailed(message))
-        }
-
-        guard dictionary["result"] != nil || dictionary["error"] != nil else {
-            return nil
-        }
-
-        guard let result = dictionary["result"] else {
-            return .failure(QuotaProviderError.noQuotaData)
-        }
-
-        do {
-            let resultData = try JSONSerialization.data(withJSONObject: result)
-            return .success(try snapshot(fromAppServerResultData: resultData))
-        } catch {
-            return .failure(error)
-        }
-    }
-
-    private static func cleanup(process: Process, stdout: Pipe, stderr: Pipe) {
-        stdout.fileHandleForReading.readabilityHandler = nil
-        stderr.fileHandleForReading.readabilityHandler = nil
-
-        if process.isRunning {
-            process.terminate()
-        }
-    }
-
-    private static func lastLine(from output: String) -> String? {
-        output
-            .split(whereSeparator: \.isNewline)
-            .last
-            .map(String.init)
-    }
-
-    private static func environmentWithCodexPath() -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
-        let launchServicesSafePath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-        if let path = environment["PATH"], !path.isEmpty {
-            environment["PATH"] = "\(launchServicesSafePath):\(path)"
-        } else {
-            environment["PATH"] = launchServicesSafePath
-        }
-
-        return environment
     }
 }
 
@@ -218,9 +76,40 @@ private struct AppServerRateLimitsResponse: Decodable {
 }
 
 private struct AppServerRateLimitSnapshot: Decodable {
-    let primary: AppServerRateLimitWindow?
-    let secondary: AppServerRateLimitWindow?
+    let credits: AppServerCreditsSnapshot?
+    let individualLimit: AppServerIndividualLimitSnapshot?
+    let limitId: String?
+    let limitName: String?
     let planType: String?
+    let primary: AppServerRateLimitWindow?
+    let rateLimitReachedType: String?
+    let secondary: AppServerRateLimitWindow?
+}
+
+private struct AppServerCreditsSnapshot: Decodable {
+    let balance: String?
+    let hasCredits: Bool
+    let unlimited: Bool
+
+    var quotaCredits: QuotaCredits {
+        QuotaCredits(balance: balance, hasCredits: hasCredits, unlimited: unlimited)
+    }
+}
+
+private struct AppServerIndividualLimitSnapshot: Decodable {
+    let limit: String
+    let remainingPercent: Double
+    let resetsAt: Double
+    let used: String
+
+    var quotaIndividualLimit: QuotaIndividualLimit {
+        QuotaIndividualLimit(
+            limit: limit,
+            used: used,
+            remainingPercent: max(0, min(100, remainingPercent)),
+            resetsAt: Date(timeIntervalSince1970: resetsAt)
+        )
+    }
 }
 
 private struct AppServerRateLimitWindow: Decodable {

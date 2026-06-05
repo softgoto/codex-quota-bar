@@ -65,6 +65,27 @@ struct QuotaPanelView: View {
                 .background(Color.black.opacity(0.16), in: Capsule())
                 .help(snapshot.source)
 
+            if let statusText = snapshot.rateLimitStatusText {
+                Text(statusText)
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .foregroundStyle(.white.opacity(0.82))
+                    .background(Color.red.opacity(0.22), in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .stroke(Color.red.opacity(0.24), lineWidth: 1)
+                    }
+            } else if let individualLimit = snapshot.individualLimit {
+                Text("个人 \(Int(individualLimit.remainingPercent.rounded()))%")
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .foregroundStyle(.white.opacity(0.74))
+                    .background(Color.white.opacity(0.08), in: Capsule())
+                    .help(individualLimit.helpText)
+            }
+
             Spacer()
 
             Button(action: store.refresh) {
@@ -78,7 +99,7 @@ struct QuotaPanelView: View {
                 }
             }
             .buttonStyle(IconButtonStyle())
-            .help("本机刷新：重扫本机 Codex 日志，零消耗；自动每 5 分钟检查一次")
+            .help("本机刷新：重扫本机 Codex 日志，作为离线快照")
 
             Button(action: store.refreshLive) {
                 if store.isLiveRefreshing {
@@ -93,7 +114,7 @@ struct QuotaPanelView: View {
             }
             .buttonStyle(LiveRefreshButtonStyle())
             .disabled(store.isLiveRefreshing)
-            .help("实时刷新：优先读取 Codex app-server 额度接口，零模型请求；旧版 Codex 回退本机快照")
+            .help("实时刷新：读取 Codex app-server 完整额度快照，零模型请求；失败时回退离线快照")
 
             Button(action: SettingsWindowController.shared.show) {
                 Image(systemName: "gearshape")
@@ -355,5 +376,32 @@ private extension Date {
         }
 
         return "\(max(1, Int(seconds / 60)))分"
+    }
+}
+
+private extension QuotaSnapshot {
+    var rateLimitStatusText: String? {
+        guard let rateLimitReachedType else {
+            return nil
+        }
+
+        switch rateLimitReachedType {
+        case "rate_limit_reached":
+            return "额度已达上限"
+        case "workspace_owner_credits_depleted":
+            return "额度已耗尽"
+        case "workspace_member_credits_depleted":
+            return "成员额度耗尽"
+        case "workspace_owner_usage_limit_reached", "workspace_member_usage_limit_reached":
+            return "workspace 限制"
+        default:
+            return "额度受限"
+        }
+    }
+}
+
+private extension QuotaIndividualLimit {
+    var helpText: String {
+        "个人额度：已用 \(used)，上限 \(limit)，重置 \(resetsAt.formattedDateTime)"
     }
 }

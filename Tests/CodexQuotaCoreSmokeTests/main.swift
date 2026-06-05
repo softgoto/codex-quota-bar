@@ -4,12 +4,25 @@ import Foundation
 @main
 enum CodexQuotaCoreSmokeTests {
     static func main() async throws {
+        log("Running testParsesLatestTokenCountRateLimits")
         try await testParsesLatestTokenCountRateLimits()
+        log("Running testIgnoresTokenCountWithoutRateLimits")
         try await testIgnoresTokenCountWithoutRateLimits()
+        log("Running testChoosesNewestEventAcrossFiles")
         try await testChoosesNewestEventAcrossFiles()
+        log("Running testClampsRemainingPercent")
         try await testClampsRemainingPercent()
+        log("Running testParsesAppServerRateLimits")
         try testParsesAppServerRateLimits()
-        print("CodexQuotaCoreSmokeTests passed")
+        log("Running testFallbackProviderUsesJSONLWhenAppServerFails")
+        try await testFallbackProviderUsesJSONLWhenAppServerFails()
+        log("Running testPersistentAppServerClientReceivesSparseUpdate")
+        try await testPersistentAppServerClientReceivesSparseUpdate()
+        log("CodexQuotaCoreSmokeTests passed")
+    }
+
+    private static func log(_ message: String) {
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
     }
 
     private static func testParsesLatestTokenCountRateLimits() async throws {
@@ -34,6 +47,8 @@ enum CodexQuotaCoreSmokeTests {
             expect(snapshot.secondary.label == "7 天", "secondary label should be 7 天")
             expect(snapshot.secondary.remainingPercent == 94, "secondary remaining percent should be 94")
             expect(snapshot.planType == "prolite", "plan type should be prolite")
+            expect(snapshot.limitId == "codex", "limit id should be codex")
+            expect(snapshot.sourceKind == .offlineSnapshot, "JSONL source should be offline")
             expect(snapshot.source.hasSuffix("rollout-new.jsonl"), "source should point at newest rollout")
         }
     }
@@ -126,6 +141,11 @@ enum CodexQuotaCoreSmokeTests {
             "codex": {
               "limitId": "codex",
               "limitName": null,
+              "credits": {
+                "balance": "10",
+                "hasCredits": true,
+                "unlimited": false
+              },
               "primary": {
                 "usedPercent": 3,
                 "windowDurationMins": 300,
@@ -136,7 +156,14 @@ enum CodexQuotaCoreSmokeTests {
                 "windowDurationMins": 10080,
                 "resetsAt": 1779836113
               },
-              "planType": "prolite"
+              "planType": "prolite",
+              "rateLimitReachedType": "workspace_member_usage_limit_reached",
+              "individualLimit": {
+                "limit": "100",
+                "used": "12",
+                "remainingPercent": 88,
+                "resetsAt": 1779836113
+              }
             }
           }
         }
@@ -153,6 +180,60 @@ enum CodexQuotaCoreSmokeTests {
         expect(snapshot.secondary.windowMinutes == 10080, "secondary app-server window should be 10080 minutes")
         expect(snapshot.secondary.remainingPercent == 66, "secondary app-server remaining should be 66")
         expect(snapshot.planType == "prolite", "app-server codex limit should win over legacy root limit")
+        expect(snapshot.limitId == "codex", "app-server limit id should be codex")
+        expect(snapshot.credits?.hasCredits == true, "app-server credits should parse")
+        expect(snapshot.individualLimit?.remainingPercent == 88, "individual limit should parse")
+        expect(snapshot.rateLimitReachedType == "workspace_member_usage_limit_reached", "reached type should parse")
+    }
+
+    private static func testFallbackProviderUsesJSONLWhenAppServerFails() async throws {
+        try await withTemporaryCodexHome { codexHome in
+            try writeRollout(
+                codexHome: codexHome,
+                relativePath: "sessions/2026/05/20/rollout-fallback.jsonl",
+                lines: [
+                    tokenCountLine(timestamp: "2026-05-20T13:31:22.239Z", primaryUsed: 41, secondaryUsed: 22)
+                ]
+            )
+
+            let provider = FallbackQuotaProvider(
+                primary: FailingQuotaProvider(error: QuotaProviderError.codexCLIUnavailable),
+                fallback: CodexJSONLQuotaProvider(codexHome: codexHome)
+            )
+            let snapshot = try await provider.fetch()
+
+            expect(snapshot.primary.remainingPercent == 59, "fallback primary remaining should come from JSONL")
+            expect(snapshot.secondary.remainingPercent == 78, "fallback secondary remaining should come from JSONL")
+            expect(snapshot.sourceKind == .offlineSnapshot, "fallback source should be offline")
+        }
+    }
+
+    private static func testPersistentAppServerClientReceivesSparseUpdate() async throws {
+        let scriptURL = try writeFakeAppServerScript()
+        let client = CodexAppServerClient(
+            executableURL: scriptURL,
+            arguments: [],
+            environment: ProcessInfo.processInfo.environment,
+            defaultTimeout: 3
+        )
+        let provider = CodexAppServerQuotaProvider(client: client, timeout: 3)
+        let counter = LockedCounter()
+
+        provider.setRateLimitsUpdatedHandler {
+            counter.increment()
+        }
+
+        let first = try await provider.fetch()
+        try await waitUntil(timeout: 2) {
+            counter.value > 0
+        }
+        let second = try await provider.fetch()
+        provider.stop()
+
+        expect(first.primary.remainingPercent == 91, "first fake app-server snapshot should parse")
+        expect(second.primary.remainingPercent == 83, "second fake app-server snapshot should parse")
+        expect(second.limitName == "Codex", "second read should keep full limit metadata")
+        expect(counter.value == 1, "sparse rate limit update should trigger notification once")
     }
 
     private static func withTemporaryCodexHome(_ body: (URL) async throws -> Void) async throws {
@@ -183,6 +264,44 @@ enum CodexQuotaCoreSmokeTests {
         """
     }
 
+    private static func writeFakeAppServerScript() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fake-codex-app-server-\(UUID().uuidString).zsh")
+        let script = """
+        #!/bin/zsh
+        count=0
+        while IFS= read -r line; do
+          if [[ "$line" == *initialize* && "$line" == *id* ]]; then
+            echo '{"id":1,"result":{}}'
+          elif [[ "$line" == *rateLimits*read* ]]; then
+            if [[ "$count" == "0" ]]; then
+              echo '{"id":2,"result":{"rateLimits":{"limitId":"legacy","primary":{"usedPercent":99,"windowDurationMins":300,"resetsAt":1779199104},"secondary":{"usedPercent":99,"windowDurationMins":10080,"resetsAt":1779785904},"planType":"pro"},"rateLimitsByLimitId":{"codex":{"limitId":"codex","limitName":"Codex","primary":{"usedPercent":9,"windowDurationMins":300,"resetsAt":1779429665},"secondary":{"usedPercent":11,"windowDurationMins":10080,"resetsAt":1779836113},"planType":"prolite"}}}}'
+              echo '{"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":{"usedPercent":77}}}}'
+              count=1
+            else
+              echo '{"id":3,"result":{"rateLimits":{"limitId":"codex","limitName":"Codex","primary":{"usedPercent":17,"windowDurationMins":300,"resetsAt":1779429665},"secondary":{"usedPercent":19,"windowDurationMins":10080,"resetsAt":1779836113},"planType":"prolite"}}}'
+            fi
+          fi
+        done
+        """
+        try script.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url
+    }
+
+    private static func waitUntil(timeout: TimeInterval, condition: @escaping () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            if condition() {
+                return
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        throw SmokeTestError.failed("condition was not met before timeout")
+    }
+
     private static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
         guard condition() else {
             fatalError(message)
@@ -192,4 +311,29 @@ enum CodexQuotaCoreSmokeTests {
 
 private enum SmokeTestError: Error {
     case failed(String)
+}
+
+private struct FailingQuotaProvider: QuotaProvider {
+    let error: Error
+
+    func fetch() async throws -> QuotaSnapshot {
+        throw error
+    }
+}
+
+private final class LockedCounter {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
 }

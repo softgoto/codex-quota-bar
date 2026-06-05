@@ -70,7 +70,11 @@ struct JSONLQuotaReader {
             secondary: latest.secondary,
             capturedAt: latest.capturedAt,
             planType: latest.planType,
-            source: latest.source
+            limitId: latest.limitId,
+            limitName: latest.limitName,
+            rateLimitReachedType: latest.rateLimitReachedType,
+            source: latest.source,
+            sourceKind: .offlineSnapshot
         )
     }
 
@@ -128,6 +132,9 @@ struct JSONLQuotaReader {
             secondary: secondaryLimit.quotaWindow,
             capturedAt: event.timestamp,
             planType: event.payload.rateLimits.planType,
+            limitId: event.payload.rateLimits.limitId,
+            limitName: event.payload.rateLimits.limitName,
+            rateLimitReachedType: event.payload.rateLimits.rateLimitReachedType,
             source: source
         )
     }
@@ -143,6 +150,9 @@ private struct ParsedQuotaEvent {
     let secondary: QuotaWindow
     let capturedAt: Date
     let planType: String?
+    let limitId: String?
+    let limitName: String?
+    let rateLimitReachedType: String?
     let source: String
 }
 
@@ -163,14 +173,20 @@ private struct RolloutEvent: Decodable {
 }
 
 private struct RateLimits: Decodable {
+    let limitId: String?
+    let limitName: String?
     let primary: RateLimitWindow?
     let secondary: RateLimitWindow?
     let planType: String?
+    let rateLimitReachedType: String?
 
     enum CodingKeys: String, CodingKey {
+        case limitId = "limit_id"
+        case limitName = "limit_name"
         case primary
         case secondary
         case planType = "plan_type"
+        case rateLimitReachedType = "rate_limit_reached_type"
     }
 }
 

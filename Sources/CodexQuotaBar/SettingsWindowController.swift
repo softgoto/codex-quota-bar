@@ -62,13 +62,13 @@ private struct SettingsView: View {
             }
 
             rowSeparator
-            settingsRow(title: "自动检查", value: "每 5 分钟")
+            settingsRow(title: "自动检查", value: "实时监听；兜底每 5 分钟")
             rowSeparator
-            settingsRow(title: "读取内容", value: "app-server rate_limits；旧版回退 JSONL")
+            settingsRow(title: "读取内容", value: "app-server rate_limits；离线回退 JSONL")
             rowSeparator
             settingsRow(title: "本机刷新", value: "重扫本机日志，零额度消耗")
             rowSeparator
-            settingsRow(title: "实时刷新", value: "零模型请求；旧版回退本机快照")
+            settingsRow(title: "实时刷新", value: "零模型请求；失败回退离线快照")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)

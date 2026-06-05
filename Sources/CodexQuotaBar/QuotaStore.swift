@@ -15,27 +15,50 @@ final class QuotaStore: ObservableObject {
 
     private let provider: QuotaProvider
     private let liveProvider: QuotaProvider
+    private let appServerProvider: CodexAppServerQuotaProvider?
     private var timer: Timer?
+    private var liveRefreshDebounceTask: Task<Void, Never>?
 
     init(provider: QuotaProvider, liveProvider: QuotaProvider? = nil) {
+        let appServerProvider: CodexAppServerQuotaProvider?
+        let resolvedLiveProvider: QuotaProvider
+
+        if let liveProvider {
+            appServerProvider = liveProvider as? CodexAppServerQuotaProvider
+            resolvedLiveProvider = liveProvider
+        } else {
+            let appServer = CodexAppServerQuotaProvider()
+            appServerProvider = appServer
+            resolvedLiveProvider = FallbackQuotaProvider(
+                primary: appServer,
+                fallback: provider
+            )
+        }
+
         self.provider = provider
-        self.liveProvider = liveProvider ?? CompatibleLiveQuotaProvider(
-            primary: CodexAppServerQuotaProvider(),
-            fallback: provider
-        )
+        self.liveProvider = resolvedLiveProvider
+        self.appServerProvider = appServerProvider
+
+        appServerProvider?.setRateLimitsUpdatedHandler { [weak self] in
+            Task { @MainActor in
+                self?.scheduleLiveRefreshFromNotification()
+            }
+        }
     }
 
     deinit {
         timer?.invalidate()
+        liveRefreshDebounceTask?.cancel()
+        appServerProvider?.stop()
     }
 
     func startPolling() {
-        refresh()
+        refreshLive()
 
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.refresh()
+                self?.refreshLive()
             }
         }
     }
@@ -85,17 +108,23 @@ final class QuotaStore: ObservableObject {
             isLiveRefreshing = false
         }
     }
-}
 
-private struct CompatibleLiveQuotaProvider: QuotaProvider {
-    let primary: QuotaProvider
-    let fallback: QuotaProvider
+    private func scheduleLiveRefreshFromNotification() {
+        liveRefreshDebounceTask?.cancel()
+        liveRefreshDebounceTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            } catch {
+                return
+            }
 
-    func fetch() async throws -> QuotaSnapshot {
-        do {
-            return try await primary.fetch()
-        } catch {
-            return try await fallback.fetch()
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await MainActor.run {
+                self?.refreshLive()
+            }
         }
     }
 }
